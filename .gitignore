@@ -1,0 +1,12 @@
+# Local encrypted vault (created at runtime by the local backend)
+vault_data/
+
+# Real secrets — never commit these; only the .example is tracked
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/

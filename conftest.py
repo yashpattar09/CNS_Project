@@ -1,0 +1,10 @@
+"""Ensure the project root (this folder) is importable when running pytest.
+
+Lets `import ehr_crypto` and `import sample_pdf` work regardless of the directory
+pytest is invoked from.
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

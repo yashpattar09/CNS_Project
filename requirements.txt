@@ -1,0 +1,9 @@
+# Runtime + dev dependencies for the Hybrid RSA+AES EHR Vault.
+# All are well-established libraries — no custom cryptography is used.
+
+streamlit>=1.42          # web UI
+cryptography>=42.0        # RSA-OAEP, AES-256-GCM, SHA-256, PBKDF2
+argon2-cffi>=23.1         # Argon2id key derivation (default KDF)
+
+supabase>=2.4             # OPTIONAL cloud backend (Supabase Storage over HTTPS)
+pytest>=8.0              # to run the test suite
