@@ -112,7 +112,7 @@ def render_preview(data: bytes, filename: str) -> None:
 
 
 def logout() -> None:
-    for k in ("session", "view_id", "confirm_delete", "flash"):
+    for k in ("session", "view_id", "enc_id", "confirm_delete", "flash"):
         st.session_state.pop(k, None)
 
 
@@ -235,19 +235,21 @@ def documents_tab(session) -> None:
     for d in docs:
         with st.expander(f"📄 {d.filename}  ·  {human_size(d.size)}  ·  {fmt_date(d.created_at)}"):
             st.caption(f"file_id `{d.file_id}` · SHA-256 `{d.sha256[:24]}…`")
-            c1, c2, c3, c4 = st.columns(4)
-            if c1.button("👁 View / verify", key=f"view_{d.file_id}", use_container_width=True):
+            c1, c2, c3, c4, c5 = st.columns(5)
+            if c1.button("👁 View (decrypt)", key=f"view_{d.file_id}", use_container_width=True):
                 st.session_state.view_id = d.file_id
-            if c2.button("✅ Verify only", key=f"verify_{d.file_id}", use_container_width=True):
+            if c2.button("🔒 Show encrypted", key=f"enc_{d.file_id}", use_container_width=True):
+                st.session_state.enc_id = d.file_id
+            if c3.button("✅ Verify only", key=f"verify_{d.file_id}", use_container_width=True):
                 _verify_only(session, d)
-            if c3.button("⚠️ Tamper (demo)", key=f"tamper_{d.file_id}", use_container_width=True):
+            if c4.button("⚠️ Tamper (demo)", key=f"tamper_{d.file_id}", use_container_width=True):
                 VAULT.tamper(session.username, d.file_id)
                 st.session_state.flash = (
                     "warning",
                     f"Corrupted one byte of “{d.filename}”. Now click View to see detection.",
                 )
                 st.rerun()
-            if c4.button("🗑 Delete", key=f"del_{d.file_id}", use_container_width=True):
+            if c5.button("🗑 Delete", key=f"del_{d.file_id}", use_container_width=True):
                 st.session_state.confirm_delete = d.file_id
 
     # Delete confirmation
@@ -260,12 +262,20 @@ def documents_tab(session) -> None:
             if a.button("Yes, delete", type="primary"):
                 VAULT.delete(session.username, pending)
                 st.session_state.pop("confirm_delete", None)
-                if st.session_state.get("view_id") == pending:
-                    st.session_state.pop("view_id", None)
+                for k in ("view_id", "enc_id"):
+                    if st.session_state.get(k) == pending:
+                        st.session_state.pop(k, None)
                 st.rerun()
             if b.button("Cancel"):
                 st.session_state.pop("confirm_delete", None)
                 st.rerun()
+
+    # Encrypted-at-rest view (great for a live demo)
+    enc_id = st.session_state.get("enc_id")
+    if enc_id:
+        match = next((x for x in docs if x.file_id == enc_id), None)
+        if match:
+            render_encrypted(session, match)
 
     # View / integrity result
     view_id = st.session_state.get("view_id")
@@ -273,7 +283,7 @@ def documents_tab(session) -> None:
         match = next((x for x in docs if x.file_id == view_id), None)
         if match:
             st.divider()
-            st.markdown(f"### Viewing “{match.filename}”")
+            st.markdown(f"### Viewing “{match.filename}” (decrypted)")
             try:
                 plaintext = VAULT.view(session, view_id)
                 st.markdown('<span class="ehr-badge ehr-ok">Integrity verified ✓</span>', unsafe_allow_html=True)
@@ -283,6 +293,61 @@ def documents_tab(session) -> None:
                 st.error(str(exc))
             except EhrCryptoError as exc:
                 st.error(str(exc))
+
+
+def render_encrypted(session, d) -> None:
+    """Show the raw ciphertext stored at rest — unreadable without the passphrase."""
+    st.divider()
+    st.markdown(f"### 🔒 Encrypted version of “{d.filename}” (as stored at rest)")
+
+    blob = VAULT.encrypted_blob(session.username, d.file_id)
+    sidecar = VAULT.get_sidecar(session.username, d.file_id)
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Cipher", "AES-256-GCM")
+    m2.metric("Key wrap", "RSA-3072 OAEP")
+    m3.metric("Ciphertext size", human_size(len(blob)))
+
+    preview = blob[:512]
+    st.markdown(f"**Raw ciphertext — first {len(preview)} of {len(blob)} bytes (hex):**")
+    rows = [
+        " ".join(f"{b:02x}" for b in preview[i : i + 16])
+        for i in range(0, len(preview), 16)
+    ]
+    st.code("\n".join(rows) + ("\n…" if len(blob) > len(preview) else ""), language="text")
+    st.caption(
+        "Notice it does not begin with `%PDF-` and shows no readable text — this is what an "
+        "attacker with access to storage would see. It cannot be decrypted without your passphrase."
+    )
+
+    d1, d2 = st.columns(2)
+    d1.download_button(
+        "⬇️ Download raw encrypted file (.enc)",
+        data=blob,
+        file_name=f"{d.filename}.enc",
+        mime="application/octet-stream",
+        key=f"dlenc_{d.file_id}",
+        use_container_width=True,
+    )
+    if d2.button("Hide encrypted view", key=f"hideenc_{d.file_id}", use_container_width=True):
+        st.session_state.pop("enc_id", None)
+        st.rerun()
+
+    with st.expander("Show the key-management metadata (sidecar JSON)"):
+        st.caption(
+            "This is all that's stored next to the ciphertext. The AES key is only present in "
+            "`wrapped_key` — encrypted with your RSA public key — never in the clear."
+        )
+        st.json(
+            {
+                "scheme": sidecar.scheme,
+                "wrapped_key (RSA-OAEP, base64)": sidecar.wrapped_key,
+                "nonce (base64)": sidecar.nonce,
+                "tag (base64)": sidecar.tag,
+                "sha256_of_original (hex)": sidecar.sha256,
+                "aad": sidecar.aad,
+            }
+        )
 
 
 def _verify_only(session, d) -> None:

@@ -136,6 +136,10 @@ class Vault:
     def get_sidecar(self, username: str, file_id: str) -> Sidecar:
         return Sidecar.from_json(self.backend.get_bytes(self._sidecar_path(username, file_id)))
 
+    def encrypted_blob(self, username: str, file_id: str) -> bytes:
+        """Return the raw ciphertext exactly as stored at rest (no decryption)."""
+        return self.backend.get_bytes(self._enc_path(username, file_id))
+
     def view(self, session: Session, file_id: str) -> bytes:
         """Decrypt and return one document's plaintext (owner + integrity checked)."""
         sidecar = self.get_sidecar(session.username, file_id)
